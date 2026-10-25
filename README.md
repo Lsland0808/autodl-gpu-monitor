@@ -6,7 +6,7 @@
 
 ## ✨ 核心功能
 
-- 🔍 **智能监控**: 实时监控指定型号的 GPU 可用性
+- 🔍 **智能监控**: 同时监控多个 GPU 型号和指定区域
 - ⚡ **自动购买**: 发现可用资源时自动下单购买
 - 📱 **即时通知**: 支持 Server酱 微信推送通知
 - 🎯 **精准配置**: 支持多种 GPU 型号、数量和镜像配置
@@ -48,21 +48,24 @@ pip install -r requirements.txt
 
 ```json
 {
-  "authorization": "你的授权令牌",
-  "mode": "monitor_and_buy",
+  "authorization": "",
+  "mode": "monitor_only",
   "gpu": {
-    "model": "RTX 4090",
-    "num": 1
+    "models": ["RTX 3090", "RTX 4090", "RTX 4090D"],
+    "num": 1,
+    "regions": ["内蒙B区", "重庆A区"]
   },
   "image": {
     "private_image_uuid": "",
     "autodl_image": "hub.kce.ksyun.com/autodl-image/torch:cuda12.4-cudnn-devel-ubuntu22.04-py312-torch2.5.1"
   },
   "notification": {
-    "sendkey": "SCT123456xxxxxxxxxxxxx"
+    "sendkey": ""
   }
 }
 ```
+
+仓库还提供不含凭据的 `config.example.json`。请将自己的 Authorization 和 SendKey 只保存在本地，不要提交到公开仓库。
 
 ### 🔧 参数详解
 
@@ -82,22 +85,34 @@ pip install -r requirements.txt
 - **推荐**: 测试时使用 `monitor_only`，确认无误后切换到 `monitor_and_buy`
 
 #### 3. gpu 对象
-##### 3.1 model
-- **说明**: 要监控和购买的GPU型号
-- **类型**: 字符串
+##### 3.1 models
+- **说明**: 要同时监控和购买的 GPU 型号，数组顺序就是抢购优先级
+- **类型**: 非空字符串数组
 - **可选值**: 
   - **RTX 系列**: `"RTX 5090"`, `"RTX 4090"`, `"RTX 4090D"`, `"RTX 3090"`, `"RTX 3080*2"`, `"RTX 3080 Ti"`, `"RTX 3080"`, `"RTX 3060"`, `"RTX 2080 Ti *2"`, `"RTX 2080 Ti"`, `"RTX A4000"`
   - **GTX 系列**: `"GTX 1080 Ti"`
   - **专业卡系列**: `"V100-32GB"`, `"V100-SXM2-32GB"`, `"A100-PCIE-40GB"`, `"A100-SXM4-80GB"`, `"A800-80GB"`, `"H800"`, `"H20-NVLink"`, `"L20"`, `"L40"`, `"A40"`, `"Tesla T4"`
   - **虚拟GPU**: `"vGPU-32GB"`, `"vGPU-48GB"`
   - **其他**: `"TITAN Xp"`, `"CPU"`, `"CPU-close-HT"`, `"910B2x鲲鹏920"`
-- **示例**: `"TITAN Xp"`
+- **示例**: `["RTX 3090", "RTX 4090", "RTX 4090D"]`
+- **兼容**: 旧配置 `"model": "RTX 3090"` 仍可使用；如果 `models` 和 `model` 同时存在，以 `models` 为准
 
 ##### num - GPU 数量
 - **功能**: 指定购买的 GPU 卡数
 - **类型**: `integer`
 - **范围**: 1-8（根据 GPU 型号限制）
 - **示例**: `1` (单卡), `4` (四卡并行)
+
+##### regions - 区域
+- **功能**: 限制只在指定区域监控和购买，数组顺序是同一型号下的区域优先级
+- **类型**: 非空字符串数组
+- **可选值**: `"内蒙B区"`, `"重庆A区"`, `"西北B区"`, `"北京B区"`, `"北京A区"`, `"佛山区"`, `"内蒙A区"`, `"L20专区"`, `"3090专区"`, `"V100专区"`, `"A800专区"`, `"华为昇腾专区"`
+- **示例**: `["内蒙B区", "重庆A区"]`
+- **兼容**: 不配置时，自动合并各目标型号原有的默认区域
+
+程序每轮对每个区域只查询一次。当多种型号同时有货时，按照 `models` 顺序、再按照 `regions` 顺序尝试；某个候选被其他用户抢走后会继续尝试同轮的下一个候选。成功创建一个实例后程序立即退出，不会继续购买第二个实例。
+
+仅监控模式会把同轮发现的全部可用型号和区域合并到一条通知中，然后退出。
 
 #### 🐳 镜像配置
 
@@ -169,4 +184,3 @@ pip install -r requirements.txt
 ---
 
 <div align="center">
-
