@@ -7,6 +7,25 @@ import json
 
 import watch
 
+
+POLL_INTERVAL_SECONDS = 10
+
+
+def get_available_gpu_num(gpu_info):
+    """返回各区域空闲 GPU 卡数之和。"""
+    return sum(
+        max(0, int(info.get("idle_gpu_num", 0)))
+        for info in gpu_info.values()
+    )
+
+
+def has_region_with_capacity(gpu_info, required_num):
+    """至少一个区域的空闲卡数达到单次购买需求。"""
+    return any(
+        int(info.get("idle_gpu_num", 0)) >= required_num
+        for info in gpu_info.values()
+    )
+
 # 检查是否有 authorization，如果没有则登录
 if not config.has_authorization():
     print("检测到配置文件中没有 authorization，开始登录...")
@@ -59,18 +78,15 @@ if config.mode == "monitor_only":
         print("GPU监控结果:")
         print(gpu_info)
         
-        # 检查是否有可用的GPU
-        available_gpus = []
-        for region, machines in gpu_info.items():
-            if machines:  # 如果该区域有可用机器
-                available_gpus.extend(machines)
+        # 只有空闲卡数满足需求时才认为有资源。
+        available_gpu_num = get_available_gpu_num(gpu_info)
         
-        if available_gpus:
-            print(f"发现可用GPU: {len(available_gpus)} 台")
+        if has_region_with_capacity(gpu_info, config.gpu_num):
+            print(f"发现可用GPU: {available_gpu_num} 张")
             # 发送通知
             response = send_notification(
                 title=f"GPU可用通知 - {config.gpu_model}",
-                content=f"发现 {len(available_gpus)} 台可用的 {config.gpu_model}",
+                content=f"发现 {available_gpu_num} 张空闲的 {config.gpu_model}",
                 gpu_info=gpu_info
             )
             print("通知发送结果:")
@@ -78,7 +94,7 @@ if config.mode == "monitor_only":
             break
         else:
             print("暂无可用GPU，继续监控...")
-            time.sleep(30)  # 等待30秒后继续监控
+            time.sleep(POLL_INTERVAL_SECONDS)
 
 elif config.mode == "monitor_and_buy":
     print("运行模式: 监控并购买")
@@ -89,13 +105,10 @@ elif config.mode == "monitor_and_buy":
         print("GPU监控结果:")
         print(gpu_info)
         
-        # 检查是否有可用的GPU
-        available_gpus = []
-        for region, machines in gpu_info.items():
-            if machines:  # 如果该区域有可用机器
-                available_gpus.extend(machines)
+        # 只有空闲卡数满足需求时才进入购买流程。
+        available_gpu_num = get_available_gpu_num(gpu_info)
         
-        if available_gpus:
+        if has_region_with_capacity(gpu_info, config.gpu_num):
             # 购买gpu
             result = gpu.buy(config=config,
                            gpu=config.gpu_model,
@@ -117,11 +130,14 @@ elif config.mode == "monitor_and_buy":
             else:
                 # 购买失败，不发送通知，继续监控
                 print(f"购买失败: {result['message']}")
+                if result.get('fatal'):
+                    print("订单结果可能不确定，已停止自动购买。请先到 AutoDL 控制台核对实例列表。")
+                    break
                 print("继续监控...")
-                time.sleep(10)  # 等待10秒后继续尝试
+                time.sleep(POLL_INTERVAL_SECONDS)
         else:
             print("暂无可用GPU，继续监控...")
-            time.sleep(30)  # 等待30秒后继续监控
+            time.sleep(POLL_INTERVAL_SECONDS)
 
 else:
     print(f"未知的运行模式: {config.mode}")

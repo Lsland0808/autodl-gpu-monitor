@@ -1,15 +1,15 @@
 {
-  "authorization": "",
+  "authorization": "eyJhbGciOiJFUzI1NiIsImtpZCI6InB1YmxpYy1rZXktMjAyNjA5IiwidHlwIjoiSldUIn0.eyJ1aWQiOjU2ODI5NywidXVpZCI6IjBlNDNiNzk5LTY1Y2EtNDllYS04ZWFhLWU2MmQ0MmVhMWM5OSIsInRlbmFudCI6ImF1dG9kbCIsInBlcnNpc3RfdXVpZCI6IjIyN2FmOTlmLTQwZTctNDg2Mi1iZWM5LTE5MTBkMTIxYzI0MyIsImF1ZCI6IndlYnNpdGUiLCJleHAiOjE3OTc4ODY4MDAsImlhdCI6MTc5Mjc2NDc0N30.gpn4csgkaVzt2zCPFdAA6NuervTfVnXoR7Zyb_Wrft06_JXKZl9kyuClUcN8KsTXX_1bYGkHknneePA4GE9zYA",
   "mode": "monitor_and_buy",
   "gpu": {
-    "model": "RTX 4090",
+    "model": "RTX 3090",
     "num": 1
   },
   "image": {
     "private_image_uuid": "",
-    "autodl_image": "hub.kce.ksyun.com/autodl-image/torch:cuda11.8-cudnn8-devel-ubuntu20.04-py38-torch2.0.0"
+    "autodl_image": "hub.kce.ksyun.com/autodl-image/torch:cuda12.1-cudnn-devel-ubuntu22.04-py310-torch2.8.0"
   },
   "notification": {
-    "sendkey": ""
+    "sendkey": "SCT448841TS2Vf0a3kwjQ4BNEYQvTC5lxk"
   }
 }

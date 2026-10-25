@@ -3,7 +3,7 @@ import ast
 import requests
 from fake_useragent import UserAgent
 
-from watch import watch_gpu
+from watch import query_post_json, watch_gpu
 
 
 region2name = {
@@ -38,9 +38,17 @@ def get_machine_info(config, gpu, region,gpu_num):
     }
     
     machine_info = []
-    response = requests.post(url = url, headers = headers, json = data).json()
+    try:
+        response = query_post_json(url, headers=headers, data=data)
+    except (requests.RequestException, ValueError) as exc:
+        print(f"查询可购买机器失败，稍后重试: {exc}")
+        return []
+
+    if not isinstance(response.get('data'), dict):
+        print(f"查询可购买机器返回异常: {response.get('msg', response)}")
+        return []
   
-    for v in response['data']['list']:
+    for v in response['data'].get('list', []):
         
         if v['gpu_idle_num']<gpu_num:
             continue
@@ -87,7 +95,8 @@ def buy(config, gpu, gpu_num,image,private_image_uuid):
         'machine_id': '',
         'price': '',
         'region_name': '',
-        'gpu_info': {}
+        'gpu_info': {},
+        'fatal': False,
     }
     
     gpu_info = watch_gpu(config, gpu)
@@ -99,8 +108,23 @@ def buy(config, gpu, gpu_num,image,private_image_uuid):
         for info in machine_info:
             data['instance_info']['machine_id'] = info['machine_id']
             data['price_info']['machine_id'] = info['machine_id']
-            response = requests.post(url = url, headers = headers, json = data).json()
-            if response['code'] == 'Success':
+            # 创建订单不能自动重试：如果服务端已经创建订单但响应丢失，
+            # 重试可能生成重复实例。
+            try:
+                http_response = requests.post(
+                    url,
+                    headers=headers,
+                    json=data,
+                    timeout=(10, 30),
+                )
+                http_response.raise_for_status()
+                response = http_response.json()
+            except (requests.RequestException, ValueError) as exc:
+                result['fatal'] = True
+                result['message'] = f"创建订单请求结果未知: {exc}"
+                return result
+
+            if response.get('code') == 'Success':
                 info['machine_price'] = info['machine_price']/1000  # 转换为元/小时
                 code = 'Success'
                 result['success'] = True
@@ -122,4 +146,3 @@ def buy(config, gpu, gpu_num,image,private_image_uuid):
     result['message'] = f"购买失败: 没有找到可用的 {gpu} GPU"
     print(result['message'])
     return result
-
