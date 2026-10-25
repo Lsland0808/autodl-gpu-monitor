@@ -1,0 +1,23 @@
+{
+  "authorization": "",
+  "mode": "monitor_only",
+  "gpu": {
+    "models": [
+      "RTX 3090",
+      "RTX 4090",
+      "RTX 4090D"
+    ],
+    "num": 1,
+    "regions": [
+      "内蒙B区",
+      "重庆A区"
+    ]
+  },
+  "image": {
+    "private_image_uuid": "",
+    "autodl_image": "hub.kce.ksyun.com/autodl-image/torch:cuda12.4-cudnn-devel-ubuntu22.04-py312-torch2.5.1"
+  },
+  "notification": {
+    "sendkey": ""
+  }
+}

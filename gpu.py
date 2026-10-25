@@ -1,27 +1,10 @@
-import ast
-
 import requests
 from fake_useragent import UserAgent
 
-from watch import query_post_json, watch_gpu
+from watch import query_post_json
 
 
-region2name = {
-    "['nm-B1', 'nm-B2']": '内蒙B区',
-    "['cq-A1']": '重庆A区',
-    "['west-B', 'west-C']": '西北B区',
-    "['bj-B1']": '北京B区',
-    "['beijing-A', 'beijing-B', 'beijing-D', 'beijing-E']": '北京A区',
-    "['foshan-A']": '佛山区',
-    "['neimeng-A', 'neimeng-C', 'neimeng-D']": '内蒙A区',
-    "['bj-C1']": 'L20专区',
-    "['yz-A1']": '3090专区',
-    "['beijing-C']": 'V100专区',
-    "['nm-A1']": 'A800专区',
-    "['gd-A1']": '华为昇腾专区',
-}
-
-def get_machine_info(config, gpu, region,gpu_num):
+def get_machine_info(config, gpu, region_sign_list, gpu_num):
     url = 'https://www.autodl.com/api/v1/user/machine/list'
     headers = {
         'User-Agent': UserAgent().random,
@@ -34,7 +17,7 @@ def get_machine_info(config, gpu, region,gpu_num):
         'gpu_type_name': [gpu],
         'page_index': 1,
         'page_size': 10,
-        'region_sign_list': ast.literal_eval(region),
+        'region_sign_list': list(region_sign_list),
     }
     
     machine_info = []
@@ -44,15 +27,19 @@ def get_machine_info(config, gpu, region,gpu_num):
         print(f"查询可购买机器失败，稍后重试: {exc}")
         return []
 
-    if not isinstance(response.get('data'), dict):
-        print(f"查询可购买机器返回异常: {response.get('msg', response)}")
+    if not isinstance(response, dict) or not isinstance(response.get('data'), dict):
+        message = response.get('msg', response) if isinstance(response, dict) else response
+        print(f"查询可购买机器返回异常: {message}")
         return []
   
     for v in response['data'].get('list', []):
-        
-        if v['gpu_idle_num']<gpu_num:
+        if not isinstance(v, dict):
             continue
-      
+        if v.get('gpu_idle_num', 0) < gpu_num:
+            continue
+        if 'machine_id' not in v or 'payg_price' not in v:
+            continue
+
         machine_info.append({
             'machine_id': v['machine_id'],
             'machine_price': v['payg_price']
@@ -62,7 +49,10 @@ def get_machine_info(config, gpu, region,gpu_num):
     return machine_info
 
 
-def buy(config, gpu, gpu_num,image,private_image_uuid):
+def buy_candidate(config, candidate, gpu_num, image, private_image_uuid):
+    gpu = candidate['gpu']
+    region_name = candidate['region']
+    region_sign_list = candidate['region_sign_list']
     if image is None:
         image = 'hub.kce.ksyun.com/autodl-image/torch:cuda12.4-cudnn-devel-ubuntu22.04-py312-torch2.5.1'
     url = 'https://www.autodl.com/api/v1/order/instance/create/payg'
@@ -95,54 +85,55 @@ def buy(config, gpu, gpu_num,image,private_image_uuid):
         'machine_id': '',
         'price': '',
         'region_name': '',
-        'gpu_info': {},
+        'gpu_info': candidate,
         'fatal': False,
     }
-    
-    gpu_info = watch_gpu(config, gpu)
-    result['gpu_info'] = gpu_info
-    
-    for region in gpu_info.keys():
-        code = ''
-        machine_info = get_machine_info(config, gpu, region, gpu_num)
-        for info in machine_info:
-            data['instance_info']['machine_id'] = info['machine_id']
-            data['price_info']['machine_id'] = info['machine_id']
-            # 创建订单不能自动重试：如果服务端已经创建订单但响应丢失，
-            # 重试可能生成重复实例。
-            try:
-                http_response = requests.post(
-                    url,
-                    headers=headers,
-                    json=data,
-                    timeout=(10, 30),
-                )
-                http_response.raise_for_status()
-                response = http_response.json()
-            except (requests.RequestException, ValueError) as exc:
-                result['fatal'] = True
-                result['message'] = f"创建订单请求结果未知: {exc}"
-                return result
 
-            if response.get('code') == 'Success':
-                info['machine_price'] = info['machine_price']/1000  # 转换为元/小时
-                code = 'Success'
-                result['success'] = True
-                result['region'] = region
-                result['machine_id'] = info['machine_id']
-                result['price'] = info['machine_price']
-                result['region_name'] = region2name[str(region)]
-                result['message'] = f"购买成功: {region2name[str(region)]} - {info['machine_id']} - {info['machine_price']}元/小时"
-                print(result['message'])
-                return result
-            else:
-                continue
-        if code == 'Success':
-            break
-        else:
-            continue
-    
-    # 如果没有购买成功
-    result['message'] = f"购买失败: 没有找到可用的 {gpu} GPU"
+    machine_info = get_machine_info(config, gpu, region_sign_list, gpu_num)
+    last_error = ''
+    for info in machine_info:
+        data['instance_info']['machine_id'] = info['machine_id']
+        data['price_info']['machine_id'] = info['machine_id']
+        # 创建订单不能自动重试：如果服务端已经创建订单但响应丢失，
+        # 重试可能生成重复实例。
+        try:
+            http_response = requests.post(
+                url,
+                headers=headers,
+                json=data,
+                timeout=(10, 30),
+            )
+            http_response.raise_for_status()
+            response = http_response.json()
+        except (requests.RequestException, ValueError) as exc:
+            result['fatal'] = True
+            result['message'] = f"创建订单请求结果未知: {exc}"
+            return result
+
+        if not isinstance(response, dict):
+            result['fatal'] = True
+            result['message'] = f"创建订单返回格式异常，订单结果未知: {response}"
+            return result
+
+        if response.get('code') == 'Success':
+            raw_price = info.get('machine_price')
+            price = raw_price / 1000 if isinstance(raw_price, (int, float)) else raw_price
+            result['success'] = True
+            result['region'] = region_name
+            result['machine_id'] = info['machine_id']
+            result['price'] = price
+            result['region_name'] = region_name
+            result['message'] = (
+                f"购买成功: {gpu} - {region_name} - "
+                f"{info['machine_id']} - {price}元/小时"
+            )
+            print(result['message'])
+            return result
+
+        last_error = response.get('msg') or response.get('message') or str(response.get('code', '未知错误'))
+
+    result['message'] = f"{gpu} 在 {region_name} 购买失败"
+    if last_error:
+        result['message'] += f": {last_error}"
     print(result['message'])
     return result
