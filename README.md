@@ -17,26 +17,29 @@
 
 ### 环境准备
 
-确保你的系统已安装 Python 3.8+
+项目使用 [uv](https://docs.astral.sh/uv/) 管理 Python 和依赖，固定使用 Python 3.12。
 
 ```bash
-# 创建虚拟环境
-python -m venv venv
+# macOS 可使用 Homebrew 安装 uv
+brew install uv
 
-# 激活虚拟环境
-# Linux/macOS
-source venv/bin/activate
-# Windows
-venv\Scripts\activate
-
-# 安装依赖包
-pip install -r requirements.txt
+# 根据 uv.lock 创建 .venv 并安装依赖
+uv sync --locked
 ```
 
 ### 快速运行
-   ```bash
-   python main.py
-   ```
+
+```bash
+uv run --locked python main.py
+```
+
+运行无网络单元测试：
+
+```bash
+uv run --locked python -m unittest discover -s tests -v
+```
+
+新增或删除依赖时分别使用 `uv add 包名` 和 `uv remove 包名`，并将更新后的 `pyproject.toml` 与 `uv.lock` 一起提交。
 
 > 💡 首次运行如果没有配置 `authorization`，程序会自动引导你完成登录流程
 

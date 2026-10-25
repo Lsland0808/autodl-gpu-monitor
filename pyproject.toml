@@ -1,0 +1,11 @@
+[project]
+name = "autodl-gpu-monitor"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fake-useragent==2.2.0",
+    "matplotlib==3.8.2",
+    "pillow==11.2.1",
+    "requests==2.32.3",
+    "serverchan-sdk>=1.0.6",
+]
