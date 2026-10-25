@@ -182,7 +182,7 @@ uv run --locked python -m unittest discover -s tests -v
 </details>
 
 
-本项目部分代码参考了 [autogpu](https://github.com/lemonmindyes/autogpu) 项目，感谢原作者的贡献。
+本项目部分代码与实现思路参考了 [autogpu](https://github.com/lemonmindyes/autogpu) 和 [Jiayi-Fu/autodl-gpu-monitor](https://github.com/Jiayi-Fu/autodl-gpu-monitor) 项目，感谢两位原作者的开源贡献与启发。
 
 ---
 
