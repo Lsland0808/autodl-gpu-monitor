@@ -13,6 +13,9 @@
       "重庆A区"
     ]
   },
+  "monitor": {
+    "interval_seconds": 10
+  },
   "image": {
     "private_image_uuid": "",
     "autodl_image": "hub.kce.ksyun.com/autodl-image/torch:cuda12.4-cudnn-devel-ubuntu22.04-py312-torch2.5.1"

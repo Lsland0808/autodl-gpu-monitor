@@ -158,6 +158,7 @@ class MainFlowTests(unittest.TestCase):
             image="example-image",
             private_image_uuid="",
             sendkey="",
+            poll_interval_seconds=0,
         )
 
     @patch("main.sc_send", side_effect=RuntimeError("notification unavailable"))
@@ -243,10 +244,9 @@ class MainFlowTests(unittest.TestCase):
 
     @patch("main.send_notification")
     @patch("main.gpu.buy_candidate")
-    @patch("main.time.sleep")
     @patch("main.watch.watch_gpus")
     def test_zero_idle_does_not_trigger_purchase(
-        self, watch_mock, sleep_mock, buy_mock, notify_mock
+        self, watch_mock, buy_mock, notify_mock
     ):
         available = candidate("RTX 3090", "内蒙B区", 1)
         watch_mock.side_effect = [
@@ -266,7 +266,6 @@ class MainFlowTests(unittest.TestCase):
         result = main.run(self.make_runtime_config("monitor_and_buy"))
 
         self.assertEqual(result, 0)
-        sleep_mock.assert_called_once_with(main.POLL_INTERVAL_SECONDS)
         buy_mock.assert_called_once()
 
 

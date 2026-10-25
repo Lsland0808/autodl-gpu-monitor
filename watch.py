@@ -36,7 +36,7 @@ def query_post_json(url, *, headers, data):
     return response.json()
 
 
-def watch_gpus(config, models=None, regions=None):
+def watch_gpus(config, models=None, regions=None, event_callback=None):
     """每个区域查询一次，并按型号优先、区域次优先返回库存记录。"""
     url = 'https://www.autodl.com/api/v1/machine/region/gpu_type'
     headers = {
@@ -47,8 +47,13 @@ def watch_gpus(config, models=None, regions=None):
     regions = list(regions or config.gpu_regions)
     region_inventory = {}
 
+    def emit(event_type, **payload):
+        if event_callback is not None:
+            event_callback({"type": event_type, **payload})
+
     for region_name in regions:
         region_sign_list = REGION_CATALOG[region_name]
+        emit("region_query_started", region=region_name)
         try:
             response = query_post_json(
                 url,
@@ -57,11 +62,13 @@ def watch_gpus(config, models=None, regions=None):
             )
         except (requests.RequestException, ValueError) as exc:
             print(f"查询区域 {region_name} 失败，稍后重试: {exc}")
+            emit("region_error", region=region_name, message=str(exc))
             continue
 
         if not isinstance(response, dict) or not isinstance(response.get('data'), list):
             message = response.get('msg', response) if isinstance(response, dict) else response
             print(f"查询区域 {region_name} 返回异常: {message}")
+            emit("region_error", region=region_name, message=str(message))
             continue
 
         inventory = {}
@@ -72,6 +79,11 @@ def watch_gpus(config, models=None, regions=None):
                 if model in models and isinstance(details, dict):
                     inventory[model] = details
         region_inventory[region_name] = inventory
+        emit(
+            "region_result",
+            region=region_name,
+            inventory=inventory,
+        )
 
     candidates = []
     for model in models:
