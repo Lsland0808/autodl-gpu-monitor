@@ -264,7 +264,38 @@ class GuiSmokeTests(unittest.TestCase):
                 },
             })
             row = window.row_map[("RTX 3090", "内蒙B区")]
-            self.assertEqual(window.inventory.item(row, 4).text(), "有货")
+            self.assertEqual(window.inventory.item(row, 6).text(), "有货")
+            window.close()
+
+    def test_disk_filter_and_expansion_are_loaded_independently(self):
+        from gui import MainWindow
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            data = default_config_data()
+            data["disk"] = {
+                "min_expandable_gb": 400,
+                "expand_data_disk_gb": 200,
+            }
+            Config.validate_and_save(data, path)
+            window = MainWindow(path)
+            self.assertEqual(window.min_expandable_disk.value(), 400)
+            self.assertEqual(window.expand_data_disk.value(), 200)
+            self.assertEqual(window.inventory.columnCount(), 8)
+            window._initialize_inventory()
+            window._handle_event({
+                "type": "eligible_inventory",
+                "candidates": [{
+                    "gpu": "RTX 3090",
+                    "region": "内蒙B区",
+                    "eligible_machine_count": 2,
+                    "max_expandable_gb": 500,
+                }],
+            })
+            row = window.row_map[("RTX 3090", "内蒙B区")]
+            self.assertEqual(window.inventory.item(row, 4).text(), "2")
+            self.assertEqual(window.inventory.item(row, 5).text(), "500 GB")
+            self.assertEqual(window.inventory.item(row, 6).text(), "有货")
             window.close()
 
     def test_close_requests_safe_stop(self):

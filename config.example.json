@@ -16,6 +16,10 @@
   "monitor": {
     "interval_seconds": 10
   },
+  "disk": {
+    "min_expandable_gb": 0,
+    "expand_data_disk_gb": 0
+  },
   "image": {
     "private_image_uuid": "",
     "autodl_image": "hub.kce.ksyun.com/autodl-image/torch:cuda12.4-cudnn-devel-ubuntu22.04-py312-torch2.5.1"

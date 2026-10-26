@@ -17,11 +17,19 @@ def get_available_candidates(gpu_info, required_num):
 
 
 def format_available_summary(candidates):
-    return "\n".join(
-        f"- {candidate['gpu']} / {candidate['region']}: "
-        f"空闲 {candidate.get('idle_gpu_num', 0)} 张"
-        for candidate in candidates
-    )
+    lines = []
+    for candidate in candidates:
+        line = (
+            f"- {candidate['gpu']} / {candidate['region']}: "
+            f"空闲 {candidate.get('idle_gpu_num', 0)} 张"
+        )
+        if 'eligible_machine_count' in candidate:
+            line += (
+                f"，符合磁盘要求的主机 {candidate['eligible_machine_count']} 台"
+                f"，最大可扩容 {candidate.get('max_expandable_gb', 0):g} GB"
+            )
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def send_notification(config, title, content, gpu_info=None, sender=None):
@@ -55,6 +63,7 @@ class MonitorService:
         watch_fn=None,
         buy_fn=None,
         notify_fn=None,
+        machine_fn=None,
     ):
         self.config = config
         self.stop_event = stop_event or threading.Event()
@@ -62,6 +71,7 @@ class MonitorService:
         self.watch_fn = watch_fn or watch.watch_gpus
         self.buy_fn = buy_fn or gpu.buy_candidate
         self.notify_fn = notify_fn or send_notification
+        self.machine_fn = machine_fn or gpu.get_machine_info
         self.poll_interval_seconds = getattr(config, "poll_interval_seconds", 10)
         self._region_results = 0
         self._region_errors = 0
@@ -94,6 +104,15 @@ class MonitorService:
         self._log(f"运行模式: {mode_name}")
         self._log(f"目标 GPU: {', '.join(self.config.gpu_models)}")
         self._log(f"目标区域: {', '.join(self.config.gpu_regions)}")
+        minimum_disk = getattr(self.config, "min_expandable_gb", 0)
+        expansion_disk = getattr(self.config, "expand_data_disk_gb", 0)
+        if minimum_disk:
+            self._log(f"最低可扩容空间: {minimum_disk} GB")
+        if expansion_disk:
+            self._log(
+                f"下单时将立即扩容数据盘 {expansion_disk} GB；该容量会按日独立计费",
+                "warning",
+            )
 
         while not self.stop_event.is_set():
             self._region_results = 0
@@ -121,6 +140,9 @@ class MonitorService:
                 self._emit("state", state="error", message="所有区域查询失败")
             else:
                 available = get_available_candidates(gpu_info, self.config.gpu_num)
+                machines_by_candidate = {}
+                if available and self._disk_requirements_enabled():
+                    available, machines_by_candidate = self._qualify_by_disk(available)
                 if available:
                     summary = format_available_summary(available)
                     self._log(f"发现可用 GPU:\n{summary}", "success")
@@ -144,11 +166,17 @@ class MonitorService:
                         )
                         return 0
 
-                    purchase_result = self._try_purchase(available)
+                    purchase_result = self._try_purchase(
+                        available,
+                        machines_by_candidate,
+                    )
                     if purchase_result is not None:
                         return purchase_result
                 else:
-                    self._log("暂无满足数量要求的 GPU")
+                    if self._disk_requirements_enabled():
+                        self._log("暂无同时满足 GPU 数量和磁盘要求的主机")
+                    else:
+                        self._log("暂无满足数量要求的 GPU")
 
             self._emit(
                 "state",
@@ -163,7 +191,58 @@ class MonitorService:
         self._emit("finished", code=0, reason="stopped")
         return 0
 
-    def _try_purchase(self, available):
+    def _disk_requirements_enabled(self):
+        return bool(
+            getattr(self.config, "min_expandable_gb", 0)
+            or getattr(self.config, "expand_data_disk_gb", 0)
+        )
+
+    def _qualify_by_disk(self, candidates):
+        qualified = []
+        machines_by_candidate = {}
+        minimum = getattr(self.config, "min_expandable_gb", 0)
+        expansion = getattr(self.config, "expand_data_disk_gb", 0)
+        required = max(minimum, expansion)
+        self._log(
+            f"正在筛选可扩容空间不少于 {required} GB 的具体主机"
+        )
+        for candidate in candidates:
+            if self.stop_event.is_set():
+                break
+            machines = self.machine_fn(
+                self.config,
+                candidate["gpu"],
+                candidate["region_sign_list"],
+                self.config.gpu_num,
+            )
+            if not machines:
+                self._log(
+                    f"{candidate['gpu']} / {candidate['region']} "
+                    "未找到或未能查询到符合磁盘要求的主机",
+                    "warning",
+                )
+                continue
+            max_expandable_gb = max(
+                (
+                    info["max_expandable_bytes"] / gpu.GIB
+                    for info in machines
+                    if isinstance(info.get("max_expandable_bytes"), (int, float))
+                    and not isinstance(info.get("max_expandable_bytes"), bool)
+                ),
+                default=0,
+            )
+            decorated = {
+                **candidate,
+                "eligible_machine_count": len(machines),
+                "max_expandable_gb": max_expandable_gb,
+            }
+            qualified.append(decorated)
+            machines_by_candidate[(candidate["gpu"], candidate["region"])] = machines
+        self._emit("eligible_inventory", candidates=qualified)
+        return qualified, machines_by_candidate
+
+    def _try_purchase(self, available, machines_by_candidate=None):
+        machines_by_candidate = machines_by_candidate or {}
         for candidate in available:
             if self.stop_event.is_set():
                 return None
@@ -174,6 +253,9 @@ class MonitorService:
                 gpu_num=self.config.gpu_num,
                 image=self.config.image,
                 private_image_uuid=self.config.private_image_uuid,
+                machine_info=machines_by_candidate.get(
+                    (candidate["gpu"], candidate["region"])
+                ),
             )
             if result["success"]:
                 content = (
@@ -182,6 +264,13 @@ class MonitorService:
                     f"价格: {result['price']}元/小时\n"
                     f"机器ID: {result['machine_id']}"
                 )
+                if result.get("expand_data_disk_gb"):
+                    content += f"\n数据盘扩容: {result['expand_data_disk_gb']} GB"
+                    if result.get("data_disk_daily_price") is not None:
+                        content += (
+                            "\n预计数据盘费用: "
+                            f"{result['data_disk_daily_price']:.3f}元/日"
+                        )
                 response = self.notify_fn(
                     self.config,
                     title=f"GPU购买成功 - {candidate['gpu']}",

@@ -1,6 +1,6 @@
 [project]
 name = "autodl-gpu-monitor"
-version = "0.2.0"
+version = "0.3.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fake-useragent==2.2.0",

@@ -13,6 +13,7 @@ DEFAULT_POLL_INTERVAL_SECONDS = 10
 MIN_POLL_INTERVAL_SECONDS = 5
 MAX_POLL_INTERVAL_SECONDS = 60
 VALID_MODES = {"monitor_only", "monitor_and_buy"}
+MAX_DISK_GB = 102400
 
 
 def default_config_data():
@@ -26,6 +27,10 @@ def default_config_data():
             "regions": ["内蒙B区", "重庆A区"],
         },
         "monitor": {"interval_seconds": DEFAULT_POLL_INTERVAL_SECONDS},
+        "disk": {
+            "min_expandable_gb": 0,
+            "expand_data_disk_gb": 0,
+        },
         "image": {
             "private_image_uuid": "",
             "autodl_image": DEFAULT_IMAGE,
@@ -158,6 +163,18 @@ class Config:
                 "配置项 monitor.interval_seconds 必须是 5 到 60 之间的整数"
             )
 
+        disk_config = self.config_data.get("disk", {})
+        if not isinstance(disk_config, dict):
+            raise TypeError("配置项 disk 必须是对象")
+        self.min_expandable_gb = self._disk_size_gb(
+            disk_config.get("min_expandable_gb", 0),
+            "disk.min_expandable_gb",
+        )
+        self.expand_data_disk_gb = self._disk_size_gb(
+            disk_config.get("expand_data_disk_gb", 0),
+            "disk.expand_data_disk_gb",
+        )
+
         image_config = self.config_data.get("image")
         if not isinstance(image_config, dict):
             raise TypeError("配置项 image 必须是对象")
@@ -186,6 +203,10 @@ class Config:
                     "regions": list(self.gpu_regions),
                 },
                 "monitor": {"interval_seconds": self.poll_interval_seconds},
+                "disk": {
+                    "min_expandable_gb": self.min_expandable_gb,
+                    "expand_data_disk_gb": self.expand_data_disk_gb,
+                },
                 "image": {
                     "private_image_uuid": self.private_image_uuid,
                     "autodl_image": self.image,
@@ -193,6 +214,16 @@ class Config:
                 "notification": {"sendkey": self.sendkey},
             }
         )
+
+    @staticmethod
+    def _disk_size_gb(value, field_name):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 <= value <= MAX_DISK_GB
+        ):
+            raise ValueError(f"配置项 {field_name} 必须是 0 到 {MAX_DISK_GB} 之间的整数")
+        return value
 
     def to_dict(self):
         return copy.deepcopy(self.config_data)

@@ -31,7 +31,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config_loader import Config, MAX_POLL_INTERVAL_SECONDS, MIN_POLL_INTERVAL_SECONDS
+from config_loader import (
+    Config,
+    MAX_DISK_GB,
+    MAX_POLL_INTERVAL_SECONDS,
+    MIN_POLL_INTERVAL_SECONDS,
+)
 from login_helper import (
     create_qr_session,
     login_with_password,
@@ -420,6 +425,17 @@ class MainWindow(QMainWindow):
         self.interval = QSpinBox()
         self.interval.setRange(MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS)
         self.interval.setSuffix(" 秒")
+        self.min_expandable_disk = QSpinBox()
+        self.min_expandable_disk.setRange(0, MAX_DISK_GB)
+        self.min_expandable_disk.setSuffix(" GB")
+        self.min_expandable_disk.setSpecialValueText("不限制")
+        self.expand_data_disk = QSpinBox()
+        self.expand_data_disk.setRange(0, MAX_DISK_GB)
+        self.expand_data_disk.setSuffix(" GB")
+        self.expand_data_disk.setSpecialValueText("不扩容")
+        self.expand_data_disk.setToolTip(
+            "创建实例时立即扩容；扩容数据盘会按日单独计费，关机后仍会计费"
+        )
         self.mode = QComboBox()
         self.mode.addItem("仅监控", "monitor_only")
         self.mode.addItem("监控并购买", "monitor_and_buy")
@@ -435,6 +451,8 @@ class MainWindow(QMainWindow):
         )
         form.addRow("GPU 数量", self.gpu_num)
         form.addRow("轮询间隔", self.interval)
+        form.addRow("最低可扩容空间", self.min_expandable_disk)
+        form.addRow("下单立即扩容", self.expand_data_disk)
         form.addRow("运行模式", self.mode)
         form.addRow("公共镜像", self.image_edit)
         form.addRow("私有镜像 UUID", self.private_image_edit)
@@ -460,9 +478,18 @@ class MainWindow(QMainWindow):
         status_row.addWidget(self.next_query_label)
         layout.addLayout(status_row)
 
-        self.inventory = QTableWidget(0, 6)
+        self.inventory = QTableWidget(0, 8)
         self.inventory.setHorizontalHeaderLabels(
-            ["GPU 型号", "区域", "空闲", "总数", "状态", "更新时间"]
+            [
+                "GPU 型号",
+                "区域",
+                "空闲",
+                "总数",
+                "合格主机",
+                "最大可扩容",
+                "状态",
+                "更新时间",
+            ]
         )
         self.inventory.horizontalHeader().setStretchLastSection(True)
         self.inventory.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -487,6 +514,8 @@ class MainWindow(QMainWindow):
         )
         self.gpu_num.setValue(self.config.gpu_num)
         self.interval.setValue(self.config.poll_interval_seconds)
+        self.min_expandable_disk.setValue(self.config.min_expandable_gb)
+        self.expand_data_disk.setValue(self.config.expand_data_disk_gb)
         self.mode.setCurrentIndex(max(0, self.mode.findData(self.config.mode)))
         self.image_edit.setText(self.config.image)
         self.private_image_edit.setText(self.config.private_image_uuid)
@@ -520,6 +549,10 @@ class MainWindow(QMainWindow):
                     "regions": self.regions_list.checked_values(),
                 },
                 "monitor": {"interval_seconds": self.interval.value()},
+                "disk": {
+                    "min_expandable_gb": self.min_expandable_disk.value(),
+                    "expand_data_disk_gb": self.expand_data_disk.value(),
+                },
                 "image": {
                     "private_image_uuid": self.private_image_edit.text().strip(),
                     "autodl_image": self.image_edit.text().strip(),
@@ -592,9 +625,18 @@ class MainWindow(QMainWindow):
                 f"GPU 数量：{self.config.gpu_num}\n"
                 f"型号优先级：{' → '.join(self.config.gpu_models)}\n"
                 f"区域优先级：{' → '.join(self.config.gpu_regions)}\n"
+                f"最低可扩容空间：{self.config.min_expandable_gb or '不限制'}"
+                f"{' GB' if self.config.min_expandable_gb else ''}\n"
+                f"下单立即扩容：{self.config.expand_data_disk_gb or '不扩容'}"
+                f"{' GB' if self.config.expand_data_disk_gb else ''}\n"
                 f"镜像：{self.config.private_image_uuid or self.config.image or '默认镜像'}\n\n"
                 "确认后，发现库存将立即自动创建付费实例。"
             )
+            if self.config.expand_data_disk_gb:
+                summary += (
+                    "\n\n警告：扩容数据盘会按主机价格单独按日计费，"
+                    "即使实例关机仍会继续计费。"
+                )
             answer = QMessageBox.warning(
                 self,
                 "确认启用自动购买",
@@ -644,7 +686,16 @@ class MainWindow(QMainWindow):
                 row = self.inventory.rowCount()
                 self.inventory.insertRow(row)
                 self.row_map[(model, region)] = row
-                values = [model, region, "—", "—", "等待查询", "—"]
+                values = [
+                    model,
+                    region,
+                    "—",
+                    "—",
+                    "—",
+                    "—",
+                    "等待查询",
+                    "—",
+                ]
                 for column, value in enumerate(values):
                     self.inventory.setItem(row, column, QTableWidgetItem(value))
 
@@ -667,6 +718,8 @@ class MainWindow(QMainWindow):
             self.last_query_label.setText(f"最近查询：{event.get('queried_at', '—')}")
             for candidate in event.get("candidates", []):
                 self._update_inventory_candidate(candidate, event.get("queried_at", "—"))
+        elif event_type == "eligible_inventory":
+            self._update_eligible_inventory(event.get("candidates", []))
         elif event_type == "purchase_success":
             result = event["result"]
             QMessageBox.information(
@@ -675,7 +728,17 @@ class MainWindow(QMainWindow):
                 f"型号：{result['gpu_info']['gpu']}\n"
                 f"区域：{result['region_name']}\n"
                 f"机器 ID：{result['machine_id']}\n"
-                f"价格：{result['price']} 元/小时",
+                f"价格：{result['price']} 元/小时"
+                + (
+                    f"\n数据盘扩容：{result['expand_data_disk_gb']} GB"
+                    if result.get("expand_data_disk_gb")
+                    else ""
+                )
+                + (
+                    f"\n预计数据盘费用：{result['data_disk_daily_price']:.3f} 元/日"
+                    if result.get("data_disk_daily_price") is not None
+                    else ""
+                ),
             )
         elif event_type == "order_uncertain":
             QMessageBox.critical(
@@ -689,6 +752,10 @@ class MainWindow(QMainWindow):
         region = event.get("region")
         if event_type == "region_query_started":
             for model in self.config.gpu_models:
+                row = self.row_map.get((model, region))
+                if row is not None:
+                    self.inventory.item(row, 4).setText("—")
+                    self.inventory.item(row, 5).setText("—")
                 self._set_row_status(model, region, "查询中", QColor("#d39e00"))
         elif event_type == "region_error":
             for model in self.config.gpu_models:
@@ -707,12 +774,23 @@ class MainWindow(QMainWindow):
                 else:
                     idle = details.get("idle_gpu_num", 0)
                     total = details.get("total_gpu_num", "—")
-                    status = "有货" if int(idle) >= self.config.gpu_num else "无货"
+                    if int(idle) >= self.config.gpu_num and (
+                        self.config.min_expandable_gb
+                        or self.config.expand_data_disk_gb
+                    ):
+                        status = "筛选磁盘"
+                    else:
+                        status = "有货" if int(idle) >= self.config.gpu_num else "无货"
                     self._set_row_values(model, region, idle, total, status, now)
 
     def _update_inventory_candidate(self, candidate, queried_at):
         idle = candidate.get("idle_gpu_num", 0)
-        status = "有货" if int(idle) >= self.config.gpu_num else "无货"
+        if int(idle) >= self.config.gpu_num and (
+            self.config.min_expandable_gb or self.config.expand_data_disk_gb
+        ):
+            status = "筛选磁盘"
+        else:
+            status = "有货" if int(idle) >= self.config.gpu_num else "无货"
         self._set_row_values(
             candidate["gpu"],
             candidate["region"],
@@ -722,11 +800,51 @@ class MainWindow(QMainWindow):
             queried_at.split(" ")[-1],
         )
 
+    def _update_eligible_inventory(self, candidates):
+        qualified_keys = set()
+        for candidate in candidates:
+            key = (candidate["gpu"], candidate["region"])
+            qualified_keys.add(key)
+            row = self.row_map.get(key)
+            if row is None:
+                continue
+            self.inventory.item(row, 4).setText(
+                str(candidate.get("eligible_machine_count", 0))
+            )
+            self.inventory.item(row, 5).setText(
+                f"{candidate.get('max_expandable_gb', 0):g} GB"
+            )
+            self._set_row_status(*key, "有货", QColor("#198754"))
+
+        for key, row in self.row_map.items():
+            if key in qualified_keys:
+                continue
+            if self.inventory.item(row, 6).text() == "筛选磁盘":
+                self.inventory.item(row, 4).setText("0")
+                self.inventory.item(row, 5).setText("—")
+                self._set_row_status(*key, "磁盘不符", QColor("#c0392b"))
+
     def _set_row_values(self, model, region, idle, total, status, updated):
         row = self.row_map.get((model, region))
         if row is None:
             return
-        for column, value in enumerate([model, region, idle, total, status, updated]):
+        if status == "筛选磁盘":
+            existing_eligible = "—"
+            existing_expandable = "—"
+        else:
+            existing_eligible = self.inventory.item(row, 4).text()
+            existing_expandable = self.inventory.item(row, 5).text()
+        values = [
+            model,
+            region,
+            idle,
+            total,
+            existing_eligible,
+            existing_expandable,
+            status,
+            updated,
+        ]
+        for column, value in enumerate(values):
             item = self.inventory.item(row, column)
             if item is None:
                 item = QTableWidgetItem()
@@ -735,16 +853,16 @@ class MainWindow(QMainWindow):
         color = QColor("#198754") if status == "有货" else QColor("#555555")
         if status in {"查询失败", "未返回"}:
             color = QColor("#c0392b")
-        self.inventory.item(row, 4).setForeground(color)
+        self.inventory.item(row, 6).setForeground(color)
 
     def _set_row_status(self, model, region, status, color):
         row = self.row_map.get((model, region))
         if row is None:
             return
-        item = self.inventory.item(row, 4)
+        item = self.inventory.item(row, 6)
         if item is None:
             item = QTableWidgetItem()
-            self.inventory.setItem(row, 4, item)
+            self.inventory.setItem(row, 6, item)
         item.setText(status)
         item.setForeground(color)
 
